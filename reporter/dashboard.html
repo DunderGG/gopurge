@@ -1,0 +1,326 @@
+﻿<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GoPurge &#8212; {{.ProjectName}}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css">
+<script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+<style>
+:root{--tr:0.2s ease}
+[data-theme="dark"]{--bg:#0f172a;--card:#1e293b;--card-alt:#162032;--border:#334155;--t1:#f1f5f9;--t2:#94a3b8;--t3:#475569;--accent:#818cf8;--shadow:0 4px 24px rgba(0,0,0,.5);--hdr0:#0d0b1e;--hdr1:#1e1b4b;--grid:rgba(255,255,255,.07);--ctxt:#94a3b8}
+[data-theme="light"]{--bg:#d1d9e6;--card:#ffffff;--card-alt:#eef1f6;--border:#94a3b8;--t1:#0f172a;--t2:#334155;--t3:#64748b;--accent:#4f46e5;--shadow:0 2px 16px rgba(0,0,0,.14);--hdr0:#1e1b4b;--hdr1:#4338ca;--grid:rgba(0,0,0,.09);--ctxt:#475569}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:14px;background:var(--bg);color:var(--t1);line-height:1.5;transition:background var(--tr),color var(--tr)}
+.page{max-width:1280px;margin:0 auto;padding:24px 20px}
+/* Header */
+.hdr{background:linear-gradient(135deg,var(--hdr0) 0%,var(--hdr1) 100%);border-radius:14px;padding:22px 28px;margin-bottom:18px;display:flex;align-items:center;gap:14px}
+.hdr-l{display:flex;align-items:center;gap:14px;flex:1;min-width:0}
+.hdr-title h1{font-size:22px;font-weight:800;color:#fff;letter-spacing:-.3px}
+.hdr-title .sub{font-size:11px;color:rgba(255,255,255,.6);margin-top:1px}
+.hdr-badge{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:3px 10px;font-size:10px;font-weight:700;color:rgba(255,255,255,.85);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap}
+.hdr-meta{text-align:right;font-size:12px;color:rgba(255,255,255,.6);line-height:1.8;flex-shrink:0}
+.hdr-meta strong{color:rgba(255,255,255,.95);font-size:13px}
+.theme-btn{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;color:rgba(255,255,255,.85);transition:background .2s;flex-shrink:0}
+.theme-btn:hover{background:rgba(255,255,255,.22)}
+/* Cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:18px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;box-shadow:var(--shadow);transition:background var(--tr),border-color var(--tr);position:relative;overflow:hidden}
+.card::before{content:'';position:absolute;top:0;left:0;width:100%;height:3px;border-radius:12px 12px 0 0}
+.cw::before{background:linear-gradient(90deg,#818cf8,#6366f1)}.cd::before{background:linear-gradient(90deg,#f87171,#ef4444)}
+.cl::before{background:linear-gradient(90deg,#fb923c,#f97316)}.cu::before{background:linear-gradient(90deg,#a78bfa,#8b5cf6)}
+.card-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t2);margin-bottom:6px}
+.card-val{font-size:30px;font-weight:800;line-height:1}
+.cw .card-val{color:#818cf8}.cd .card-val{color:#ef4444}.cl .card-val{color:#f97316}.cu .card-val{color:#a78bfa}
+.card-sub{font-size:12px;color:var(--t2);margin-top:5px}
+/* Charts */
+.charts{display:grid;grid-template-columns:1fr 1.6fr;gap:14px;margin-bottom:18px}
+@media(max-width:780px){.charts{grid-template-columns:1fr}}
+.chart-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px 22px;box-shadow:var(--shadow);transition:background var(--tr),border-color var(--tr)}
+.chart-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--t2);margin-bottom:14px}
+.chart-wrap{position:relative;height:250px}
+/* Warnings */
+.warns{background:rgba(234,179,8,.07);border:1px solid rgba(234,179,8,.25);border-radius:12px;padding:16px 20px;margin-bottom:18px}
+.warns-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:#eab308;margin-bottom:10px}
+.warns ul{padding-left:18px}.warns li{font-size:13px;color:var(--t2);margin-bottom:4px}
+/* Tabs */
+.tab-nav{display:flex;border-bottom:1px solid var(--border);margin-bottom:0}
+.tab-btn{background:none;border:none;padding:10px 20px;font-size:13px;font-weight:600;color:var(--t2);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .15s,border-color .15s;display:flex;align-items:center;gap:8px}
+.tab-btn:hover{color:var(--accent)}.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-badge{background:var(--border);color:var(--t2);font-size:10px;font-weight:700;border-radius:20px;padding:2px 8px}
+.tab-btn.active .tab-badge{background:rgba(99,102,241,.15);color:var(--accent)}
+.tab-pane{display:none;padding-top:14px}.tab-pane.active{display:block}
+/* Section */
+.section{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow);transition:background var(--tr),border-color var(--tr)}
+/* DataTables reset */
+table.dataTable{border-collapse:collapse!important;width:100%!important}
+.dataTables_wrapper{font-size:13px;color:var(--t1)}
+.dataTables_wrapper .dataTables_length{float:left;padding:14px 16px}
+.dataTables_wrapper .dataTables_filter{float:right;padding:14px 16px}
+.dataTables_wrapper .dataTables_length label,.dataTables_wrapper .dataTables_filter label{color:var(--t2)}
+.dataTables_wrapper .dataTables_filter input,.dataTables_wrapper .dataTables_length select{background:var(--card-alt);border:1px solid var(--border);border-radius:6px;color:var(--t1);padding:5px 10px;font-size:13px;outline:none}
+.dataTables_wrapper .dataTables_filter input:focus{border-color:var(--accent)}
+table.dataTable thead th{background:var(--card-alt)!important;border-bottom:1px solid var(--border)!important;color:var(--t2);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:10px 14px;cursor:pointer;user-select:none}
+table.dataTable thead th.sorting_asc,table.dataTable thead th.sorting_desc{color:var(--accent)}
+table.dataTable tbody td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--t1)}
+table.dataTable tbody tr:hover td{background:var(--card-alt)!important}
+table.dataTable tbody tr:last-child td{border-bottom:none}
+.dataTables_wrapper .dataTables_info{clear:both;padding:12px 16px;color:var(--t3);font-size:12px}
+.dataTables_wrapper .dataTables_paginate{float:right;padding:12px 16px}
+.dataTables_wrapper .dataTables_paginate .paginate_button{background:none!important;border:1px solid var(--border)!important;border-radius:6px;color:var(--t2)!important;padding:4px 10px!important;margin:0 2px;cursor:pointer;font-size:12px}
+.dataTables_wrapper .dataTables_paginate .paginate_button:hover{background:var(--border)!important;color:var(--t1)!important}
+.dataTables_wrapper .dataTables_paginate .paginate_button.current{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)!important}
+.dataTables_wrapper .dataTables_paginate .paginate_button.disabled{opacity:.4;cursor:default}
+.dataTables_wrapper::after{content:'';display:table;clear:both}
+/* Cells */
+.path-cell{font-family:"Cascadia Code","Consolas",monospace;font-size:12px;color:var(--t2);word-break:break-all;cursor:pointer}
+.path-cell:hover{color:var(--accent)}
+.sz{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;font-family:monospace;font-size:12px;color:var(--t2)}
+.badge-v{display:inline-block;background:rgba(234,179,8,.12);color:#eab308;border:1px solid rgba(234,179,8,.3);border-radius:4px;font-size:10px;font-weight:700;padding:2px 7px;white-space:nowrap}
+/* Dup accordions */
+.dup-g{border-bottom:1px solid var(--border)}.dup-g:last-child{border-bottom:none}
+.dup-h{display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;user-select:none;transition:background .15s}
+.dup-h:hover{background:var(--card-alt)}
+.dup-arr{font-size:9px;color:var(--t3);transition:transform .2s;display:inline-block;line-height:1}
+.dup-g.open .dup-arr{transform:rotate(90deg)}
+.dup-name{font-weight:700;font-size:13px;color:var(--t1)}
+.dup-info{font-size:12px;color:var(--t2)}
+.dup-waste{margin-left:auto;font-size:11px;font-weight:700;color:#ef4444;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:3px 10px;white-space:nowrap}
+.hash-s{font-family:monospace;font-size:11px;color:var(--t3)}
+.dup-b{display:none}.dup-g.open .dup-b{display:block}
+.dup-b table{width:100%}
+.dup-b th{background:var(--card-alt);padding:7px 14px 7px 40px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);border-bottom:1px solid var(--border)}
+.dup-b th:last-child{padding-left:14px;text-align:right}
+.dup-b td{padding:8px 14px 8px 40px;border-bottom:1px solid var(--border);color:var(--t1)}
+.dup-b td:last-child{padding-left:14px;text-align:right}
+.dup-b tr:last-child td{border-bottom:none}
+/* Misc */
+.empty{padding:44px;text-align:center;color:var(--t3);font-size:13px}
+#toast{position:fixed;bottom:24px;right:24px;background:#22c55e;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9999;box-shadow:0 4px 16px rgba(34,197,94,.4)}
+.footer{text-align:center;font-size:11px;color:var(--t3);margin-top:32px;padding-bottom:16px}
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="hdr">
+  <div class="hdr-l">
+    <img src="appicon.png" width="64" height="64" alt="GoPurge" style="border-radius:11px;flex-shrink:0">
+    <div class="hdr-title">
+      <h1>GoPurge</h1>
+      <div class="sub">Asset Cleanup Dashboard  -  Always verify in Unreal Editor before removing any files.</div>
+
+    </div>
+  </div>
+  <div class="hdr-meta">
+    <strong>{{.ProjectName}}</strong><br>
+    {{.ProjectDir}}<br>
+    Scanned {{.GeneratedAt}}
+  </div>
+  <button class="theme-btn" id="theme-btn" title="Toggle dark / light mode"><span id="theme-icon">&#9728;</span></button>
+</header>
+
+<div class="cards">
+  <div class="card cw"><div class="card-label">Total Reclaimable</div><div class="card-val">{{.TotalWaste}}</div><div class="card-sub">estimated across all categories</div></div>
+  <div class="card cd"><div class="card-label">Duplicate Groups</div><div class="card-val">{{.DupGroups}}</div><div class="card-sub">{{.DupFiles}} redundant files</div></div>
+  <div class="card cl"><div class="card-label">Large Files</div><div class="card-val">{{.LargeCount}}</div><div class="card-sub">above size threshold</div></div>
+  <div class="card cu"><div class="card-label">Unreferenced Assets</div><div class="card-val">{{.UnrefCount}}</div><div class="card-sub">not found in any reference scan</div></div>
+</div>
+
+<div class="charts">
+  <div class="chart-card"><div class="chart-title">Waste by Category</div><div class="chart-wrap"><canvas id="donut-chart"></canvas></div></div>
+  <div class="chart-card"><div class="chart-title">Top Large Files</div><div class="chart-wrap"><canvas id="bar-chart"></canvas></div></div>
+</div>
+
+{{if .Warnings}}
+<div class="warns">
+  <div class="warns-title">&#9888; {{.WarnCount}} Warning{{if gt .WarnCount 1}}s{{end}}</div>
+  <ul>{{range .Warnings}}<li>{{.}}</li>{{end}}</ul>
+</div>
+{{end}}
+
+<div class="tabs">
+  <div class="tab-nav">
+    <button class="tab-btn active" onclick="showTab('t-dup',this)">Duplicates <span class="tab-badge">{{.DupGroups}}</span></button>
+    <button class="tab-btn" onclick="showTab('t-large',this)">Large Files <span class="tab-badge">{{.LargeCount}}</span></button>
+    <button class="tab-btn" onclick="showTab('t-unref',this)">Unreferenced <span class="tab-badge">{{.UnrefCount}}</span></button>
+  </div>
+
+  <div id="t-dup" class="tab-pane active">
+    <div class="section">
+      {{if .Duplicates}}
+        {{range .Duplicates}}
+        <div class="dup-g" id="dup-{{.Index}}">
+          <div class="dup-h" onclick="toggleDup({{.Index}})">
+            <span class="dup-arr">&#9658;</span>
+            <span class="dup-name">Group {{.Index}}</span>
+            <span class="dup-info">{{len .Files}} files &nbsp;&#183;&nbsp; <span class="hash-s">{{.ShortHash}}&hellip;</span></span>
+            <span class="dup-waste">&#8722;{{.Waste}}</span>
+          </div>
+          <div class="dup-b">
+            <table>
+              <thead><tr><th>Path</th><th>Size</th></tr></thead>
+              <tbody>
+                {{range .Files}}
+                <tr>
+                  <td class="path-cell" onclick="copyPath(this)" title="Click to copy">{{.Path}}</td>
+                  <td class="sz">{{formatBytes .Size}}</td>
+                </tr>
+                {{end}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {{end}}
+      {{else}}
+      <div class="empty">No duplicate files found.</div>
+      {{end}}
+    </div>
+  </div>
+
+  <div id="t-large" class="tab-pane">
+    <div class="section">
+      {{if .LargeFiles}}
+      <table id="tbl-large">
+        <thead><tr><th>File Path</th><th>Size</th></tr></thead>
+        <tbody>
+          {{range .LargeFiles}}
+          <tr>
+            <td class="path-cell" onclick="copyPath(this)" title="Click to copy">{{.Path}}</td>
+            <td class="sz" data-order="{{.Size}}">{{formatBytes .Size}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <div class="empty">No large files found above the threshold.</div>
+      {{end}}
+    </div>
+  </div>
+
+  <div id="t-unref" class="tab-pane">
+    <div class="section">
+      {{if .Unreferenced}}
+      <table id="tbl-unref">
+        <thead><tr><th>File Path</th><th>Size</th><th>Note</th></tr></thead>
+        <tbody>
+          {{range .Unreferenced}}
+          <tr>
+            <td class="path-cell" onclick="copyPath(this)" title="Click to copy">{{.Path}}</td>
+            <td class="sz" data-order="{{.Size}}">{{formatBytes .Size}}</td>
+            <td>{{if .VerifyManually}}<span class="badge-v">Verify manually</span>{{end}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <div class="empty">No unreferenced assets found.</div>
+      {{end}}
+    </div>
+  </div>
+</div>
+
+<div class="footer">GoPurge is read-only and never modifies files &nbsp;·&nbsp; © 2026 David Bennehag - <a href="https://www.dunder.gg" target="_blank" rel="noopener" style="color:var(--t3)">dunder.gg</a> &nbsp;·&nbsp; <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener" style="color:var(--t3)">GPL-3.0</a></div>
+</div>
+
+<div id="toast">&#10003; Path copied!</div>
+<script>const REPORT = {{.ChartDataJSON}};</script>
+<script>
+/* Theme */
+(function(){
+  var t=localStorage.getItem('gp-theme')||'dark';
+  document.documentElement.setAttribute('data-theme',t);
+  var el=document.getElementById('theme-icon');
+  if(el)el.innerHTML=t==='dark'?'&#9728;':'&#9790;';
+})();
+document.getElementById('theme-btn').addEventListener('click',function(){
+  var cur=document.documentElement.getAttribute('data-theme');
+  var nxt=cur==='dark'?'light':'dark';
+  document.documentElement.setAttribute('data-theme',nxt);
+  localStorage.setItem('gp-theme',nxt);
+  document.getElementById('theme-icon').innerHTML=nxt==='dark'?'&#9728;':'&#9790;';
+  updateCharts();
+});
+
+/* Tabs */
+function showTab(id,btn){
+  document.querySelectorAll('.tab-pane').forEach(function(p){p.classList.remove('active');});
+  document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.remove('active');});
+  document.getElementById(id).classList.add('active');
+  btn.classList.add('active');
+}
+
+/* Duplicate accordions */
+function toggleDup(idx){document.getElementById('dup-'+idx).classList.toggle('open');}
+
+/* Copy path */
+function copyPath(td){
+  var p=td.textContent.trim();
+  if(navigator.clipboard){navigator.clipboard.writeText(p);}
+  else{var a=document.createElement('textarea');a.value=p;document.body.appendChild(a);a.select();document.execCommand('copy');document.body.removeChild(a);}
+  var t=document.getElementById('toast');t.style.opacity='1';
+  setTimeout(function(){t.style.opacity='0';},1800);
+}
+
+/* Chart helpers */
+function isDark(){return document.documentElement.getAttribute('data-theme')==='dark';}
+function cc(){return isDark()?{grid:'rgba(255,255,255,.07)',text:'#94a3b8'}:{grid:'rgba(0,0,0,.07)',text:'#64748b'};}
+function fmtB(b){
+  if(b>=1073741824)return(b/1073741824).toFixed(2)+' GB';
+  if(b>=1048576)return(b/1048576).toFixed(1)+' MB';
+  if(b>=1024)return Math.round(b/1024)+' KB';
+  return b+' B';
+}
+
+var DC,BC;
+function initCharts(){
+  var c=cc();
+  Chart.defaults.color=c.text;
+  Chart.defaults.borderColor=c.grid;
+  DC=new Chart(document.getElementById('donut-chart'),{
+    type:'doughnut',
+    data:{
+      labels:['Duplicates','Large Files','Unreferenced'],
+      datasets:[{data:[REPORT.dupWaste,REPORT.largeWaste,REPORT.unrefWaste],backgroundColor:['#ef4444','#f97316','#8b5cf6'],hoverBackgroundColor:['#f87171','#fb923c','#a78bfa'],borderWidth:0,hoverOffset:10}]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,cutout:'62%',
+      plugins:{
+        legend:{position:'right',labels:{boxWidth:12,padding:16,color:c.text,font:{size:12}}},
+        tooltip:{callbacks:{label:function(ctx){var tot=ctx.dataset.data.reduce(function(a,b){return a+b;},0);var pct=tot>0?(ctx.raw/tot*100).toFixed(1):0;return ' '+ctx.label+': '+fmtB(ctx.raw)+' ('+pct+'%)';}}}
+      }
+    }
+  });
+  BC=new Chart(document.getElementById('bar-chart'),{
+    type:'bar',
+    data:{
+      labels:REPORT.largeFiles.map(function(f){return f.name;}),
+      datasets:[{label:'Size (MB)',data:REPORT.largeFiles.map(function(f){return f.mb;}),backgroundColor:'rgba(249,115,22,.8)',hoverBackgroundColor:'rgba(249,115,22,1)',borderRadius:4,borderSkipped:false}]
+    },
+    options:{
+      indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:function(ctx){return ' '+ctx.raw.toFixed(1)+' MB';}}}},
+      scales:{
+        x:{grid:{color:c.grid},ticks:{color:c.text,font:{size:11}}},
+        y:{grid:{display:false},ticks:{color:c.text,font:{size:11},callback:function(v){var l=this.getLabelForValue(v);return l.length>28?l.substring(0,25)+'...':l;}}}
+      }
+    }
+  });
+}
+function updateCharts(){
+  var c=cc();
+  if(DC){DC.options.plugins.legend.labels.color=c.text;DC.update();}
+  if(BC){BC.options.scales.x.grid.color=c.grid;BC.options.scales.x.ticks.color=c.text;BC.options.scales.y.ticks.color=c.text;BC.update();}
+}
+
+/* DataTables + charts init */
+$(document).ready(function(){
+  if($('#tbl-large').length){$('#tbl-large').DataTable({order:[[1,'desc']],pageLength:25,columnDefs:[{targets:1,type:'num',className:'dt-right'}],language:{search:'Filter:'}});}
+  if($('#tbl-unref').length){$('#tbl-unref').DataTable({order:[[1,'desc']],pageLength:25,columnDefs:[{targets:1,type:'num',className:'dt-right'},{targets:2,orderable:false}],language:{search:'Filter:'}});}
+  initCharts();
+});
+</script>
+</body>
+</html>

@@ -30,3 +30,9 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+*.png
+*.json
+*.csv
+gopurge_report.html
+*.txt

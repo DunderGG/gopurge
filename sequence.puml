@@ -1,0 +1,95 @@
+@startuml GoPurge Execution Flow
+
+actor User
+participant "main()" as Main
+participant "Preflight" as Validator
+participant "Project Discovery" as Discovery
+participant "Parallel Scanner\n(Worker Pool)" as Scanner
+participant "Reference Analyzer" as Analyzer
+participant "Report Generator" as Reporter
+
+' ── 0. CLI INPUT ─────────────────────────────────────────────────────────────
+User -> Main : gopurge -project-dir=<path> [-output=json|csv]\n[-workers=N] [-large-threshold=100MB]
+activate Main
+
+' ── 1. PREREQUISITES VALIDATION ───────────────────────────────────────────────
+Main -> Validator : Validate project directory
+activate Validator
+Validator -> Validator : Check .uproject file exists
+Validator -> Validator : Check Unreal Editor process is NOT running
+Validator -> Validator : Check Content/ is accessible
+
+alt Validation fails
+    Validator --> Main : Error (missing .uproject / editor running / no access)
+    Main --> User : Fatal error + hint, exit 1
+    deactivate Validator
+else Validation passes
+    Validator --> Main : OK — safe to proceed
+    deactivate Validator
+
+    ' ── 2. PROJECT DISCOVERY ─────────────────────────────────────────────────
+    Main -> Discovery : Walk "Content/" directory\n(skip Intermediate/, DerivedDataCache/)
+    activate Discovery
+    Discovery -> Discovery : os.Lstat — skip symlinks / junctions
+    Discovery -> Discovery : Apply \\?\ prefix for paths > 260 chars (Windows)
+
+    alt No assets found
+        Discovery --> Main : Empty asset list
+        Main --> User : "No assets found, nothing to do." exit 0
+        deactivate Discovery
+    else Assets found
+        Discovery --> Main : Full asset list (.uasset, .umap) + sizes
+        deactivate Discovery
+
+        ' ── 3. MULTI-STAGE DUPLICATE DETECTION ──────────────────────────────
+        Main -> Scanner : scanForDuplicates(assetList, workers)
+        activate Scanner
+        note right of Scanner
+            Internal stages (not driven by Main):
+            A) Group by file size — drop unique sizes
+            B) Read first 1KB header — drop unique headers
+            C) Full SHA256 via worker pool (fan-out/fan-in channels)
+               Stream via io.Copy to cap RAM < 50 MB
+        end note
+        Scanner -> Scanner : Access denied? → log warning, skip file
+        Scanner --> Main : DuplicateGroups []FileGroup
+        deactivate Scanner
+
+        ' ── 4. LARGE FILE DETECTION ──────────────────────────────────────────
+        Main -> Scanner : findLargeFiles(assetList, threshold)
+        activate Scanner
+        Scanner --> Main : LargeFiles []FileEntry
+        deactivate Scanner
+
+        ' ── 5. REFERENCE ANALYSIS ────────────────────────────────────────────
+        Main -> Analyzer : analyzeReferences(projectDir, assetList, &warnings)
+        activate Analyzer
+        note right of Analyzer
+            Receives full asset list as the "known universe"
+        end note
+        Analyzer -> Analyzer : Scan .uasset binary for Soft Object Path strings\n(/Game/Path/To/Asset)
+        Analyzer -> Analyzer : Regex scan Source/ for FSoftObjectPath
+        Analyzer -> Analyzer : Cross-reference — flag assets with zero inbound refs
+        Analyzer -> Analyzer : Warn: game data files may be falsely flagged
+        Analyzer --> Main : UnreferencedAssets []FileEntry
+        deactivate Analyzer
+
+        ' ── 6. ASSEMBLE REPORT ────────────────────────────────────────────────
+        Main -> Main : computeTotalWaste(duplicates, largeFiles, unreferenced)
+        Main -> Main : model.Report{ GeneratedAt, ProjectDir, Duplicates, LargeFiles, Unreferenced, TotalWasteBytes, Warnings }
+
+        ' ── 7. WRITE REPORT ──────────────────────────────────────────────────
+        Main -> Reporter : generateReport(duplicates, largeFiles, unreferenced)
+        activate Reporter
+        Reporter -> Reporter : Write report.json (--output=json, default)\nor report.csv (--output=csv)
+        Reporter --> User : Print summary to stdout\n(Duplicates: N, Unreferenced: N, Large: N, Total: X GB)
+        Reporter --> User : "Report written to <output file>"
+        deactivate Reporter
+
+        note over User : Never delete automatically.\nReview report and verify in Unreal Editor before deleting.
+    end
+end
+
+deactivate Main
+
+@enduml

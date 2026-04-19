@@ -1,0 +1,100 @@
+@startuml GoPurge Component Diagram
+
+skinparam componentStyle rectangle
+skinparam ArrowColor #555555
+skinparam ComponentBackgroundColor #FAFAFA
+skinparam ComponentBorderColor #888888
+skinparam PackageBackgroundColor #F0F4FF
+skinparam PackageBorderColor #AAAACC
+skinparam NoteBackgroundColor #FFFDE7
+skinparam NoteBorderColor #CCBB44
+
+title GoPurge — Package Dependency Diagram
+
+' ── EXTERNAL BOUNDARY ────────────────────────────────────────────────────────
+actor User
+node "OS / Filesystem" as OS
+node "Unreal Engine Project" as UEProject
+
+' ── PACKAGES ─────────────────────────────────────────────────────────────────
+package "main" {
+    [main.go\n(CLI flags, orchestration)] as Main
+}
+
+package "preflight" {
+    [preflight.go\n(uproject check,\neditor process check,\nContent/ access)] as Preflight
+}
+
+package "discovery" {
+    [discovery.go\n(WalkDir, symlink guard,\nMAX_PATH prefix)] as Discovery
+}
+
+package "scanner" {
+    [scanner.go\n(orchestration)] as ScannerOrch
+    [duplicates.go\n(size → header → SHA256\nworker pool)] as Duplicates
+    [largefile.go\n(threshold filter)] as LargeFile
+}
+
+package "analyzer" {
+    [analyzer.go\n(Soft Object Paths,\nFSoftObjectPath regex,\nreference cross-check)] as Analyzer
+}
+
+package "reporter" {
+    [reporter.go\n(JSON / CSV writer,\nstdout summary)] as Reporter
+}
+
+package "model" {
+    [model.go\n(FileEntry, FileGroup,\nReport, Warnings)] as Model
+}
+
+' ── USER & FILESYSTEM INTERACTIONS ───────────────────────────────────────────
+User --> Main : CLI flags\n(-project-dir, -output,\n-workers, -large-threshold)
+Main --> User : stdout summary\n+ exit code
+
+Preflight --> OS         : Check process list\n(UnrealEditor.exe)
+Preflight --> UEProject  : Check .uproject exists\n+ Content/ accessible
+Discovery --> UEProject  : WalkDir Content/
+Duplicates --> UEProject : Read file bytes\n(header + full hash)
+Analyzer --> UEProject  : Read .uasset binaries\n+ Source/ files
+Reporter --> OS         : Write report.json / .csv
+
+' ── INTER-PACKAGE DEPENDENCIES ───────────────────────────────────────────────
+Main --> Preflight  : validate()
+Main --> Discovery  : walk()
+Main --> ScannerOrch : scanForDuplicates()\nfindLargeFiles()
+Main --> Analyzer   : analyzeReferences()
+Main --> Reporter   : generateReport()
+
+ScannerOrch --> Duplicates
+ScannerOrch --> LargeFile
+
+' ── model is consumed by all (no arrows back up to avoid clutter) ─────────────
+Preflight  ..> Model : uses
+Discovery  ..> Model : produces []FileEntry
+Duplicates ..> Model : produces []FileGroup
+LargeFile  ..> Model : produces []FileEntry
+Analyzer   ..> Model : consumes + produces []FileEntry
+Reporter   ..> Model : consumes Report
+Main       ..> Model : assembles Report
+
+note bottom of Model
+  No package imports model's
+  importers — zero risk of
+  import cycles from here.
+end note
+
+note right of Duplicates
+  Fan-out/fan-in via channels:
+  jobs chan FileEntry →
+  N workers (SHA256 via io.Copy) →
+  results chan hashResult
+end note
+
+note right of Analyzer
+  False-positive risk:
+  DataTables and config-driven
+  assets flagged with
+  VerifyManually: true
+end note
+
+@enduml
