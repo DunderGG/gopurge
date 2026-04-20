@@ -28,10 +28,13 @@ Items are grouped by theme and loosely ordered by priority within each section.
   Access-denied errors, failed stats, and skipped symlinks are collected into a
   `Warnings []string` field on the report rather than aborting the scan.
 
-- [ ] **Improve reference analysis accuracy**
-  The current binary scan searches for raw `/Game/` strings, which can produce false matches
-  in compressed or encrypted asset sections. Investigate parsing the UAsset serialisation
-  header to locate the Name Map and Import Table before scanning for references.
+- [x] **Improve reference analysis accuracy**
+  Implemented a structured parser (`analyzer/uasset.go`) for the UAsset Package File
+  Summary that walks the version-dependent header fields to locate the Name Map — an
+  uncompressed table of all string identifiers used by the package — and extracts
+  `/Game/...` paths directly from it. Because the Name Map resides before any compressed
+  or encrypted payload, this eliminates false matches produced by raw binary scanning.
+  Falls back to the raw scan for files that fail header validation, recording a warning.
 
 - [ ] **Handle redirectors (`.uasset` with `ObjectRedirector` class)**
   Unreal creates redirector assets when content is moved. These appear unreferenced but

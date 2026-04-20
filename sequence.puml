@@ -67,7 +67,8 @@ else Validation passes
         note right of Analyzer
             Receives full asset list as the "known universe"
         end note
-        Analyzer -> Analyzer : Scan .uasset binary for Soft Object Path strings\n(/Game/Path/To/Asset)
+        Analyzer -> Analyzer : Parse .uasset/.umap PackageFileSummary header\n(magic → version fields → Name Map offset)\nExtract /Game/... paths from Name Map
+        Analyzer -> Analyzer : Fallback: raw /Game/ byte-scan if header parse fails\n(records warning per file)
         Analyzer -> Analyzer : Regex scan Source/ for FSoftObjectPath
         Analyzer -> Analyzer : Cross-reference — flag assets with zero inbound refs
         Analyzer -> Analyzer : Warn: game data files may be falsely flagged

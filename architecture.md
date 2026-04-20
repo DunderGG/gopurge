@@ -24,7 +24,8 @@ GoPurge/
 │   ├── duplicates.go     — Multi-stage duplicate detection (size → header → SHA256)
 │   └── largefile.go      — Large file threshold filtering
 ├── analyzer/
-│   └── analyzer.go       — Reference analysis (Soft Object Paths, FSoftObjectPath)
+│   ├── analyzer.go       — Reference analysis orchestration and raw-scan fallback
+│   └── uasset.go         — Structured UAsset Package File Summary parser
 ├── reporter/
 │   └── reporter.go       — JSON / CSV report writer, stdout summary
 └── model/
@@ -130,15 +131,24 @@ No concurrency needed — this is CPU-cheap.
 Receives the **full** asset list from Discovery as its "known universe".
 
 Reference scanning strategy:
-1. For each `.uasset` / `.umap` file, read the binary content and search for byte
-   sequences matching the pattern `/Game/<path>` (Unreal's Soft Object Path format).
-2. Scan `Source/` Go-style with `regexp` for the C++ token `FSoftObjectPath`.
-3. Build a `referenced map[string]bool` keyed on asset path.
-4. Any asset in the known universe that has zero entries in `referenced` is flagged as unreferenced.
+1. **Structured parse (primary):** For each `.uasset` / `.umap`, `uasset.go` validates
+   the magic number, walks the version-dependent `PackageFileSummary` header fields to
+   locate the Name Map, and extracts every `/Game/...` path directly from it. The Name
+   Map is an uncompressed flat array that resides before any compressed payload, so this
+   eliminates false matches from random binary data. Handles all header variants:
+   UE4 (`LegacyFileVersion` −4 through −7), UE5 pre-5.6 (−8, `FileVersionUE5` < 1016),
+   and UE5.6+ (`FileVersionUE5` ≥ 1016, with `SavedHash` + `SectionSixOffset` inserted
+   before the `CustomVersionContainer`).
+2. **Raw scan fallback:** If header parsing fails (e.g. encrypted or obfuscated assets),
+   the file is scanned with a raw `/Game/<path>` byte-pattern search and a warning is
+   appended to `Warnings`.
+3. Scan `Source/` with `regexp` for the C++ token `FSoftObjectPath`.
+4. Build a `referenced map[string]bool` keyed on asset path.
+5. Any asset in the known universe with zero inbound references is flagged as unreferenced.
 
 **False-positive risk:** Game data files (DataTables, PrimaryAssetLabels, config-driven
 assets) are loaded at runtime by string path and will appear unreferenced in a static
-scan. The report must annotate these entries with a `"VerifyManually": true` flag and
+scan. The report annotates these entries with a `"VerifyManually": true` flag and
 a note explaining the risk.
 
 ### `reporter`
@@ -186,3 +196,76 @@ included in the report under a top-level `Warnings []string` field.
 - **RAM cap ~50 MB** during hashing — enforced by streaming via `io.Copy`.
 - **Must run with Unreal Editor closed** — enforced by pre-flight check.
 - **No external dependencies** beyond the Go standard library (at least initially).
+
+---
+
+## UAsset Package File Summary Structure
+
+The binary layout parsed by `analyzer/uasset.go`. The header is not fixed-size — its
+layout varies by engine version. We walk fields sequentially to locate `NameCount` and
+`NameOffset`, then seek directly to the Name Map.
+
+### Fixed Header Prefix (all versions)
+
+| Offset | Size | Type | Field | Notes |
+|--------|------|------|-------|-------|
+| 0 | 4 | `uint32` | `Magic` | Must equal `0x9E2A83C1`; file rejected on mismatch |
+| 4 | 4 | `int32` | `LegacyFileVersion` | Negative for all UE4/UE5 assets (`-4` through `-8`); determines variant |
+| 8 | 4 | `int32` | `LegacyUE3Version` | **Absent** when `LegacyFileVersion == -4`; otherwise present and skipped |
+| 8 or 12 | 4 | `int32` | `FileVersionUE4` | Always present; ≥ 504 means Name Map entries carry a 4-byte hash suffix |
+| +4 | 4 | `int32` | `FileVersionUE5` | **Present only** when `LegacyFileVersion ≤ -8`; ≥ 1016 means UE5.6+ layout |
+| +4 or +8 | 4 | `int32` | `FileVersionLicenseeUE` | Always present; skipped |
+
+### Version-Dependent Middle Section
+
+After `FileVersionLicenseeUE` the layout forks based on `FileVersionUE5`:
+
+#### Branch A — UE5.6+ (`FileVersionUE5 ≥ 1016`, `PACKAGE_SAVED_HASH`)
+
+| Rel. offset | Size | Type | Field | Notes |
+|-------------|------|------|-------|-------|
+| +0 | 20 | `FIoHash` | `SavedHash` | SHA-based package content hash; skipped entirely |
+| +20 | 4 | `int32` | `SectionSixOffset` | Offset to payload section 6; skipped |
+| +24 | 4 | `int32` | `CustomVersions count` | Present if `LegacyFileVersion ≤ -2` |
+| +28 | count × 20 | `Optimized[]` | `CustomVersions entries` | `FGuid` (16 bytes) + `int32` version; skipped |
+
+#### Branch B — UE5.0–5.5 and all UE4 (`FileVersionUE5 < 1016`)
+
+| Rel. offset | Size | Type | Field | Notes |
+|-------------|------|------|-------|-------|
+| +0 | 4 | `int32` | `CustomVersions count` | Present if `LegacyFileVersion ≤ -2` |
+| +4 | varies | `CustomVersion[]` | `CustomVersions entries` | Entry size depends on `LegacyFileVersion` — see table below |
+| after | 4 | `int32` | `SectionSixOffset` | Skipped |
+
+##### CustomVersion entry sizes by `LegacyFileVersion`
+
+| `LegacyFileVersion` | Format | Entry size |
+|---------------------|--------|------------|
+| `-2` | `FEnumCustomVersion` — `int32 Tag` + `int32 Version` | 8 bytes |
+| `-3`, `-4`, `-5` | `FGuidCustomVersion` — `FGuid` (16) + `int32` (4) + `FString` (var) | variable |
+| `≤ -6` | Optimized — `FGuid` (16) + `int32 Version` (4) | 20 bytes |
+
+### Fixed Fields After the Version Fork (all versions)
+
+| Size | Type | Field | Notes |
+|------|------|-------|-------|
+| variable | `FString` | `FolderName` | Mount point string; skipped |
+| 4 | `uint32` | `PackageFlags` | Asset flags bitmask; skipped |
+| **4** | **`int32`** | **`NameCount`** | **Number of Name Map entries — read and retained** |
+| **4** | **`int32`** | **`NameOffset`** | **Byte offset to the Name Map — read and retained** |
+| varies | … | *(remaining header fields)* | Skipped — we seek directly to `NameOffset` |
+
+### Name Map Entry Format (repeated `NameCount` times, starting at `NameOffset`)
+
+| Size | Type | Field | Notes |
+|------|------|-------|-------|
+| variable | `FString` | `Name` | ANSI when length `> 0`; UTF-16 LE when length `< 0` |
+| 4 | `2 × uint16` | Hash suffix | **Present only** when `FileVersionUE4 ≥ 504`; `NonCasePreservingHash` + `CasePreservingHash`; discarded |
+
+#### `FString` encoding rules
+
+| Serialised `int32` length | Encoding | Body size |
+|---------------------------|----------|-----------|
+| `0` | Empty string | 0 bytes (nothing follows) |
+| `> 0` | ANSI / Latin-1, null-terminated | `length` bytes |
+| `< 0` | UTF-16 LE, null-terminated | `|length| × 2` bytes |

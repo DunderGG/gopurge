@@ -3,11 +3,18 @@
 //
 // Strategy:
 //  1. Treat the full asset list returned by discovery as the "known universe".
-//  2. For each .uasset and .umap file, scan the binary content for byte
-//     sequences matching Unreal's Soft Object Path format: /Game/<path>.
-//  3. Walk the Source/ directory and apply a regular expression to find
+//  2. For each .uasset and .umap file, parse the Package File Summary header
+//     to locate the Name Map — an uncompressed table of all string identifiers
+//     used by the package — and extract /Game/... paths directly from it.
+//     This avoids false matches that can occur when /Game/ byte sequences
+//     appear inside compressed or encrypted payload sections. If the structured
+//     parse fails (e.g. non-standard or third-party binary), the file falls
+//     back to a full-binary raw scan and a warning is recorded.
+//  3. Non-binary assets (config files, source, etc.) are always processed with
+//     the raw scan.
+//  4. Walk the Source/ directory and apply a regular expression to find
 //     FSoftObjectPath references in C++ source files.
-//  4. Any asset in the known universe that appears in neither scan is flagged
+//  5. Any asset in the known universe that appears in neither scan is flagged
 //     as unreferenced.
 //
 // False-positive risk:
@@ -81,8 +88,17 @@ func AnalyzeReferences(projectDir string, assets []model.FileEntry, warnings *[]
 	return unreferenced, nil
 }
 
-// scanAssetBinaries reads each asset file and collects all /Game/... substrings
-// it contains, adding them to the referenced map.
+// scanAssetBinaries scans each asset file for /Game/... references and adds
+// them to the referenced map.
+//
+// For .uasset and .umap files it first attempts to parse the Package File
+// Summary header and read /Game/... paths directly from the Name Map. This
+// avoids false matches that can arise when /Game/ byte sequences appear inside
+// compressed or encrypted payload sections. If the structured parse fails
+// (e.g. non-standard asset or unknown header version), the file falls back to
+// a full-binary raw scan and a warning is recorded.
+//
+// All other file types are always processed with the raw scan.
 func scanAssetBinaries(assets []model.FileEntry, referenced map[string]bool, warnings *[]string) error {
 	for _, asset := range assets {
 		data, err := os.ReadFile(asset.Path)
@@ -90,7 +106,25 @@ func scanAssetBinaries(assets []model.FileEntry, referenced map[string]bool, war
 			*warnings = append(*warnings, fmt.Sprintf("analyzer: skipped reading %q: %v", asset.Path, err))
 			continue
 		}
-		// data is a byte slice, but extractSoftObjectPaths expects a string. We can convert it directly.
+
+		ext := strings.ToLower(filepath.Ext(asset.Path))
+		if ext == ".uasset" || ext == ".umap" {
+			paths, parseErr := parseUAssetImports(data)
+			if parseErr == nil {
+				for _, path := range paths {
+					referenced[path] = true
+				}
+				continue
+			}
+			// Structured parse failed; fall back to raw scan and record a warning.
+			*warnings = append(*warnings, fmt.Sprintf(
+				"analyzer: UAsset header parse failed for %q (%v), falling back to raw scan",
+				asset.Path, parseErr,
+			))
+		}
+
+		// Raw scan: used for non-UAsset files and as a fallback for failed parses.
+		// data is a slice of bytes read from the file. We convert it to a string and search for /Game/... paths.
 		extractSoftObjectPaths(string(data), referenced)
 	}
 	return nil

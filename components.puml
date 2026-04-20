@@ -36,7 +36,8 @@ package "scanner" {
 }
 
 package "analyzer" {
-    [analyzer.go\n(Soft Object Paths,\nFSoftObjectPath regex,\nreference cross-check)] as Analyzer
+    [analyzer.go\n(reference orchestration,\nraw-scan fallback)] as Analyzer
+    [uasset.go\n(PackageFileSummary parser,\nName Map extraction)] as UAssetParser
 }
 
 package "reporter" {
@@ -56,6 +57,7 @@ Preflight --> UEProject  : Check .uproject exists\n+ Content/ accessible
 Discovery --> UEProject  : WalkDir Content/
 Duplicates --> UEProject : Read file bytes\n(header + full hash)
 Analyzer --> UEProject  : Read .uasset binaries\n+ Source/ files
+UAssetParser --> UEProject : Parse PackageFileSummary\nheader + Name Map
 Reporter --> OS         : Write report.json / .csv
 
 ' ── INTER-PACKAGE DEPENDENCIES ───────────────────────────────────────────────
@@ -67,6 +69,7 @@ Main --> Reporter   : generateReport()
 
 ScannerOrch --> Duplicates
 ScannerOrch --> LargeFile
+Analyzer --> UAssetParser
 
 ' ── model is consumed by all (no arrows back up to avoid clutter) ─────────────
 Preflight  ..> Model : uses
@@ -76,25 +79,5 @@ LargeFile  ..> Model : produces []FileEntry
 Analyzer   ..> Model : consumes + produces []FileEntry
 Reporter   ..> Model : consumes Report
 Main       ..> Model : assembles Report
-
-note bottom of Model
-  No package imports model's
-  importers — zero risk of
-  import cycles from here.
-end note
-
-note right of Duplicates
-  Fan-out/fan-in via channels:
-  jobs chan FileEntry →
-  N workers (SHA256 via io.Copy) →
-  results chan hashResult
-end note
-
-note right of Analyzer
-  False-positive risk:
-  DataTables and config-driven
-  assets flagged with
-  VerifyManually: true
-end note
 
 @enduml
