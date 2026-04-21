@@ -49,8 +49,8 @@ func main() {
 	flag.StringVar(&projectDir, "p", "", "Path to the Unreal Engine project root (required)")
 	flag.StringVar(&outputFormat, "output", reporter.FormatHTML, `Report format: "html" (default), "json", or "csv"`)
 	flag.StringVar(&outputFormat, "o", reporter.FormatHTML, `Report format: "html" (default), "json", or "csv"`)
-	flag.IntVar(&workers, "workers", 4, "Number of goroutines for SHA-256 hashing")
-	flag.IntVar(&workers, "w", 4, "Number of goroutines for SHA-256 hashing")
+	flag.IntVar(&workers, "workers", 4, "Number of goroutines for SHA-256 hashing and reference analysis")
+	flag.IntVar(&workers, "w", 4, "Number of goroutines for SHA-256 hashing and reference analysis")
 	flag.Int64Var(&largeThresholdMB, "large-threshold", 100, "File size in MB above which a file is flagged as large")
 	flag.Int64Var(&largeThresholdMB, "l", 100, "File size in MB above which a file is flagged as large")
 	flag.StringVar(&reportPath, "report-path", "", `Output path for the report file (default: gopurge_report.<ext>)`)
@@ -126,7 +126,7 @@ func main() {
 
 	// ── 5. Reference analysis ──────────────────────────────────────────────
 	fmt.Println("→ Analysing asset references...")
-	unreferenced, err := analyzer.AnalyzeReferences(projectDir, assets, &warnings)
+	unreferenced, err := analyzer.AnalyzeReferences(projectDir, assets, workers, &warnings)
 	if err != nil {
 		log.Fatalf("reference analysis failed: %v", err)
 	}

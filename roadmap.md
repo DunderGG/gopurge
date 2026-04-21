@@ -75,9 +75,14 @@ Items are grouped by theme and loosely ordered by priority within each section.
   do not need to be re-hashed on subsequent scans. This would make incremental scans on
   large projects significantly faster.
 
-- [ ] **Parallel reference analysis**
-  The current `AnalyzeReferences` pass is single-threaded. Apply the same fan-out/fan-in
-  worker pool pattern used in the scanner to read and scan asset binaries concurrently.
+- [x] **Parallel reference analysis**
+  The `scanAssetBinaries` pass now uses the same fan-out/fan-in worker pool pattern as
+  the SHA-256 hashing stage. A producer goroutine feeds `FileEntry` values into a `jobs`
+  channel; N worker goroutines each call `scanSingleAsset` (pure I/O, no shared state)
+  and send a `scanResult` back; a single collector goroutine merges all results into the
+  reference map and warnings slice — no mutex required. The number of workers is
+  controlled by the existing `-workers` flag. `AnalyzeReferences` now accepts a
+  `workers int` parameter.
 
 - [ ] **Memory-mapped file I/O for large assets**
   For files above a configurable threshold (e.g. 500 MB), consider `mmap` instead of

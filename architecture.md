@@ -131,20 +131,25 @@ No concurrency needed — this is CPU-cheap.
 Receives the **full** asset list from Discovery as its "known universe".
 
 Reference scanning strategy:
-1. **Structured parse (primary):** For each `.uasset` / `.umap`, `uasset.go` validates
-   the magic number, walks the version-dependent `PackageFileSummary` header fields to
-   locate the Name Map, and extracts every `/Game/...` path directly from it. The Name
-   Map is an uncompressed flat array that resides before any compressed payload, so this
-   eliminates false matches from random binary data. Handles all header variants:
-   UE4 (`LegacyFileVersion` −4 through −7), UE5 pre-5.6 (−8, `FileVersionUE5` < 1016),
-   and UE5.6+ (`FileVersionUE5` ≥ 1016, with `SavedHash` + `SectionSixOffset` inserted
-   before the `CustomVersionContainer`).
-2. **Raw scan fallback:** If header parsing fails (e.g. encrypted or obfuscated assets),
-   the file is scanned with a raw `/Game/<path>` byte-pattern search and a warning is
-   appended to `Warnings`.
-3. Scan `Source/` with `regexp` for the C++ token `FSoftObjectPath`.
-4. Build a `referenced map[string]bool` keyed on asset path.
-5. Any asset in the known universe with zero inbound references is flagged as unreferenced.
+1. **Parallel binary scan (fan-out/fan-in worker pool):** `scanAssetBinaries` uses the
+   same pattern as the SHA-256 hashing stage. A producer goroutine feeds `FileEntry`
+   values into a buffered `jobs` channel; N worker goroutines each call `scanSingleAsset`
+   (pure I/O, no shared state) and push a `scanResult` back; a single collector goroutine
+   merges all results into the `referenced` map and `warnings` slice — no mutex required.
+   The number of workers is controlled by the existing `-workers` flag.
+   - **Structured parse (primary path inside each worker):** `uasset.go` validates the
+     magic number, walks the version-dependent `PackageFileSummary` header fields to
+     locate the Name Map, and extracts every `/Game/...` path directly from it. Handles
+     all header variants: UE4 (`LegacyFileVersion` −4 through −7), UE5 pre-5.6 (−8,
+     `FileVersionUE5` < 1016), and UE5.6+ (`FileVersionUE5` ≥ 1016, with `SavedHash` +
+     `SectionSixOffset` inserted before the `CustomVersionContainer`).
+   - **Raw scan fallback (per worker, on parse failure):** If header parsing fails
+     (e.g. encrypted or obfuscated assets), the worker falls back to a raw
+     `/Game/<path>` byte-pattern search and includes a warning in its `scanResult`.
+2. Scan `Source/` with `regexp` for the C++ token `FSoftObjectPath` (single-threaded —
+   source files are small and this step is not a bottleneck).
+3. Build a `referenced map[string]bool` keyed on asset path.
+4. Any asset in the known universe with zero inbound references is flagged as unreferenced.
 
 **False-positive risk:** Game data files (DataTables, PrimaryAssetLabels, config-driven
 assets) are loaded at runtime by string path and will appear unreferenced in a static

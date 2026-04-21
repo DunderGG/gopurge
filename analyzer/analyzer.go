@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"GoPurge/model"
 )
@@ -55,13 +56,14 @@ var knownFalsePositiveExtensions = map[string]bool{
 //
 // The projectDir is used to locate the Source/ directory alongside Content/.
 // Non-fatal errors (unreadable files) are appended to warnings.
-func AnalyzeReferences(projectDir string, assets []model.FileEntry, warnings *[]string) ([]model.FileEntry, error) {
+func AnalyzeReferences(projectDir string, assets []model.FileEntry, workers int, warnings *[]string) ([]model.FileEntry, error) {
 	// Build a map of referenced asset paths discovered in binaries and source files.
 	// The keys are in the /Game/... format used by Unreal's Soft Object Path system.
 	referenced := make(map[string]bool)
 
-	// Pass 1: scan all asset binaries for embedded Soft Object Paths.
-	if err := scanAssetBinaries(assets, referenced, warnings); err != nil {
+	// Pass 1: scan all asset binaries for embedded Soft Object Paths, 
+	// using the given number of worker goroutines.
+	if err := scanAssetBinaries(assets, workers, referenced, warnings); err != nil {
 		return nil, err
 	}
 
@@ -88,56 +90,153 @@ func AnalyzeReferences(projectDir string, assets []model.FileEntry, warnings *[]
 	return unreferenced, nil
 }
 
+// scanResult carries the outcome of scanning a single asset file.
+// It is passed from a worker goroutine back to the collector via the results
+// channel. Bundling both the paths and any warning into one struct means the
+// worker never has to touch the shared referenced map or warnings slice —
+// those are only written by the collector goroutine, which eliminates the need
+// for a mutex.
+type scanResult struct {
+	// paths holds every /Game/... path found in the file.
+	// It is nil (not just empty) when the file could not be read at all.
+	paths []string
+
+	// warning is non-empty when a non-fatal issue occurred, such as a read
+	// error or a structured parse failure that triggered a raw scan fallback.
+	warning string
+}
+
 // scanAssetBinaries scans each asset file for /Game/... references and adds
-// them to the referenced map.
+// them to the referenced map. It uses a fan-out/fan-in worker pool so that
+// files are read and parsed concurrently across N goroutines.
 //
-// For .uasset and .umap files it first attempts to parse the Package File
-// Summary header and read /Game/... paths directly from the Name Map. This
-// avoids false matches that can arise when /Game/ byte sequences appear inside
-// compressed or encrypted payload sections. If the structured parse fails
-// (e.g. non-standard asset or unknown header version), the file falls back to
-// a full-binary raw scan and a warning is recorded.
+// Concurrency model (mirrors the SHA-256 hashing pool in scanner/duplicates.go):
 //
-// All other file types are always processed with the raw scan.
-func scanAssetBinaries(assets []model.FileEntry, referenced map[string]bool, warnings *[]string) error {
-	for _, asset := range assets {
-		data, err := os.ReadFile(asset.Path)
-		if err != nil {
-			*warnings = append(*warnings, fmt.Sprintf("analyzer: skipped reading %q: %v", asset.Path, err))
-			continue
-		}
+//	Producer goroutine         → jobs channel (buffered, cap = workers)
+//	N worker goroutines        → each reads one job, scans the file, sends a scanResult
+//	wg-closer goroutine        → closes results channel once all workers finish
+//	Main goroutine (collector) → merges every scanResult into referenced and warnings
+//
+// The collector is the only writer to referenced and warnings, so no mutex is needed.
+func scanAssetBinaries(assets []model.FileEntry, workers int, referenced map[string]bool, warnings *[]string) error {
+	// jobs carries FileEntry values to the worker goroutines.
+	// results carries the scanResult values back to the collector on the main goroutine.
+	// Both channels are buffered so that producers and consumers don't have to
+	// synchronise on every single item — they can each work at their own pace
+	// up to the buffer capacity.
+	jobs := make(chan model.FileEntry, workers)
+	results := make(chan scanResult, workers)
 
-		ext := strings.ToLower(filepath.Ext(asset.Path))
-		if ext == ".uasset" || ext == ".umap" {
-			paths, parseErr := parseUAssetImports(data)
-			if parseErr == nil {
-				for _, path := range paths {
-					referenced[path] = true
-				}
-				continue
+	// Fan-out: start N worker goroutines.
+	// Each goroutine waits for a FileEntry on jobs, calls scanSingleAsset to do
+	// the actual file I/O and parsing, then sends the result to results.
+	// sync.WaitGroup lets us track when every worker has finished so we know
+	// it is safe to close the results channel.
+	var wg sync.WaitGroup
+	for workerIndex := 0; workerIndex < workers; workerIndex++ {
+		wg.Add(1)
+		go func() {
+			// Tell the WaitGroup this worker has finished when the goroutine returns.
+			defer wg.Done()
+
+			// "range over a channel" reads values until the channel is closed.
+			// When close(jobs) is called by the producer, all workers will
+			// finish their current job and then exit this loop automatically.
+			for asset := range jobs {
+				results <- scanSingleAsset(asset)
 			}
-			// Structured parse failed; fall back to raw scan and record a warning.
-			*warnings = append(*warnings, fmt.Sprintf(
-				"analyzer: UAsset header parse failed for %q (%v), falling back to raw scan",
-				asset.Path, parseErr,
-			))
-		}
-
-		// Raw scan: used for non-UAsset files and as a fallback for failed parses.
-		// data is a slice of bytes read from the file. We convert it to a string and search for /Game/... paths.
-		extractSoftObjectPaths(string(data), referenced)
+		}()
 	}
+
+	// wg-closer: once every worker has called wg.Done(), close the results channel.
+	// Closing results signals the collector loop below that there are no more
+	// results to receive. We run this in its own goroutine because wg.Wait()
+	// is a blocking call — it would stall the main goroutine if called directly.
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Producer: send every asset into the jobs channel, then close it.
+	// This runs in its own goroutine so the main goroutine is free to collect
+	// results at the same time. Without this goroutine, the main goroutine would
+	// block here trying to send new jobs while the (also buffered) results
+	// channel fills up — a classic channel deadlock.
+	go func() {
+		for _, asset := range assets {
+			jobs <- asset
+		}
+		// Closing jobs tells workers' range loops to stop waiting for more work.
+		close(jobs)
+	}()
+
+	// Collector: receive every scanResult from the results channel.
+	// "range over a channel" blocks until a new result arrives, processes it,
+	// then waits for the next — repeating until the wg-closer calls close(results).
+	// Only this goroutine (the main goroutine) writes to referenced and warnings,
+	// so no mutex is required.
+	for result := range results {
+		if result.warning != "" {
+			*warnings = append(*warnings, result.warning)
+		}
+		for _, path := range result.paths {
+			referenced[path] = true
+		}
+	}
+
 	return nil
 }
 
-// extractSoftObjectPaths finds all /Game/... substrings in content and marks
-// them as referenced.
-func extractSoftObjectPaths(content string, referenced map[string]bool) {
+// scanSingleAsset reads one asset file and returns all /Game/... paths found
+// in it, along with any non-fatal warning string. It is designed to be called
+// from a worker goroutine — it only reads from the filesystem and returns a
+// value; it never touches any shared state, so it is safe to call concurrently.
+func scanSingleAsset(asset model.FileEntry) scanResult {
+	data, err := os.ReadFile(asset.Path)
+	if err != nil {
+		// Record a warning and return an empty result. The file simply will not
+		// contribute any references, which is the safest behaviour on a read error.
+		return scanResult{warning: fmt.Sprintf("analyzer: skipped reading %q: %v", asset.Path, err)}
+	}
+
+	ext := strings.ToLower(filepath.Ext(asset.Path))
+	if ext == ".uasset" || ext == ".umap" {
+		paths, parseErr := parseUAssetImports(data)
+		if parseErr == nil {
+			// Structured parse succeeded — return the Name Map paths directly.
+			return scanResult{paths: paths}
+		}
+
+		// Structured parse failed; fall back to a raw byte scan and record a
+		// warning so the user knows which files could not be parsed properly.
+		return scanResult{
+			paths: extractSoftObjectPaths(string(data)),
+			warning: fmt.Sprintf(
+				"analyzer: UAsset header parse failed for %q (%v), falling back to raw scan",
+				asset.Path, parseErr,
+			),
+		}
+	}
+
+	// For all other file types (config, non-standard assets, etc.), always use
+	// the raw scan — there is no structured header to parse.
+	return scanResult{paths: extractSoftObjectPaths(string(data))}
+}
+
+// extractSoftObjectPaths finds all /Game/... substrings in content and returns
+// them as a slice of strings. Each entry is a complete Unreal asset path
+// (e.g. "/Game/Characters/Alice").
+//
+// Returning a slice instead of writing directly to a map makes this function
+// safe to call from multiple goroutines simultaneously — it only reads its
+// argument and writes to a local variable, never touching shared state.
+func extractSoftObjectPaths(content string) []string {
+	var paths []string
 	index := 0
 	for {
 		// Look for the next occurrence of the softObjectPathPrefix starting from index.
 		pos := strings.Index(content[index:], softObjectPathPrefix)
-		
+
 		// If no more occurrences are found, break the loop.
 		if pos == -1 {
 			break
@@ -152,10 +251,11 @@ func extractSoftObjectPaths(content string, referenced map[string]bool) {
 			end++
 		}
 
-		// Mark the extracted path as referenced. The key is the substring from start to end.
-		referenced[content[start:end]] = true
+		// Add the extracted path to the result slice.
+		paths = append(paths, content[start:end])
 		index = end
 	}
+	return paths
 }
 
 // The isPathChar() function is necessary because Unreal Engine's .uasset and .umap files are binary, not plain text.

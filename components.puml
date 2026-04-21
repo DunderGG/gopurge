@@ -36,7 +36,7 @@ package "scanner" {
 }
 
 package "analyzer" {
-    [analyzer.go\n(reference orchestration,\nraw-scan fallback)] as Analyzer
+    [analyzer.go\n(reference orchestration,\nfan-out/fan-in worker pool,\nraw-scan fallback)] as Analyzer
     [uasset.go\n(PackageFileSummary parser,\nName Map extraction)] as UAssetParser
 }
 

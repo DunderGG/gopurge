@@ -62,14 +62,20 @@ else Validation passes
         deactivate Scanner
 
         ' ── 5. REFERENCE ANALYSIS ────────────────────────────────────────────
-        Main -> Analyzer : analyzeReferences(projectDir, assetList, &warnings)
+        Main -> Analyzer : analyzeReferences(projectDir, assetList, workers, &warnings)
         activate Analyzer
         note right of Analyzer
-            Receives full asset list as the "known universe"
+            Receives full asset list as the "known universe".
+            Binary scan uses fan-out/fan-in worker pool
+            (same pattern as SHA-256 hashing stage):
+            Producer → jobs chan → N workers → results chan → Collector
+            Workers call scanSingleAsset (no shared state).
+            Collector is sole writer to referenced map + warnings.
         end note
-        Analyzer -> Analyzer : Parse .uasset/.umap PackageFileSummary header\n(magic → version fields → Name Map offset)\nExtract /Game/... paths from Name Map
-        Analyzer -> Analyzer : Fallback: raw /Game/ byte-scan if header parse fails\n(records warning per file)
-        Analyzer -> Analyzer : Regex scan Source/ for FSoftObjectPath
+        Analyzer -> Analyzer : [each worker] Parse .uasset/.umap PackageFileSummary\n→ extract /Game/... paths from Name Map
+        Analyzer -> Analyzer : [each worker, on parse failure] Raw /Game/ byte-scan\n+ warning added to scanResult
+        Analyzer -> Analyzer : [collector] Merge scanResults into referenced map
+        Analyzer -> Analyzer : Regex scan Source/ for FSoftObjectPath (single-threaded)
         Analyzer -> Analyzer : Cross-reference — flag assets with zero inbound refs
         Analyzer -> Analyzer : Warn: game data files may be falsely flagged
         Analyzer --> Main : UnreferencedAssets []FileEntry
