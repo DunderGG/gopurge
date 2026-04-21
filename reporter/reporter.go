@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"GoPurge/model"
 )
@@ -156,6 +157,7 @@ func printSummary(report model.Report, outputPath string) {
 	fmt.Printf("  Unreferenced:  %d files\n", len(report.Unreferenced))
 	fmt.Println("─────────────────────────────────────────────────────────────")
 	fmt.Printf("  Total reclaimable: ~%.2f GB\n", reclaimableGB)
+	fmt.Printf("  Scan duration:     %s\n", formatDuration(report.ScanDuration))
 	absPath, err := filepath.Abs(outputPath)
 	if err != nil {
 		absPath = outputPath
@@ -210,4 +212,17 @@ func toForwardSlash(path string) string {
 	// Strip the Windows extended-path prefix before writing to the report.
 	path = strings.TrimPrefix(path, `\\?\`)
 	return filepath.ToSlash(path)
+}
+// formatDuration returns a human-readable representation of duration.
+// Durations under a minute are shown in seconds (e.g. "4.23s");
+// longer durations are shown as minutes and seconds (e.g. "2m 7.4s").
+func formatDuration(duration time.Duration) string {
+	// Round to 10ms so we don't print excessive decimal places.
+	duration = duration.Round(10 * time.Millisecond)
+	if duration < time.Minute {
+		return fmt.Sprintf("%.2fs", duration.Seconds())
+	}
+	mins := int(duration.Minutes())
+	secs := duration.Seconds() - float64(mins)*60
+	return fmt.Sprintf("%dm %.1fs", mins, secs)
 }

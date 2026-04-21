@@ -70,4 +70,10 @@ type Report struct {
 	// Warnings is a list of non-fatal issues encountered during the scan,
 	// such as access-denied errors or skipped symbolic links.
 	Warnings []string
+
+	// ScanDuration is the wall-clock time elapsed from the start of
+	// pre-flight validation to the moment the report was assembled.
+	// Stored as a time.Duration (int64 nanoseconds) so it can be formatted
+	// in any unit by the reporter without loss of precision.
+	ScanDuration time.Duration
 }

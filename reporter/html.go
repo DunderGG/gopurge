@@ -29,6 +29,7 @@ type htmlData struct {
 	ProjectName     string
 	ProjectDir      string
 	GeneratedAt     string
+	ScanDuration    string
 	TotalWaste      string
 	DupGroups       int
 	DupFiles        int
@@ -116,6 +117,7 @@ func buildHTMLData(report model.Report) htmlData {
 		ProjectName:     projectName,
 		ProjectDir:      report.ProjectDir,
 		GeneratedAt:     report.GeneratedAt.Format("2006-01-02 15:04:05 UTC"),
+		ScanDuration:    formatDuration(report.ScanDuration),
 		TotalWaste:      formatBytesHTML(report.TotalWasteBytes),
 		DupGroups:       len(report.Duplicates),
 		DupFiles:        dupFileTotal,

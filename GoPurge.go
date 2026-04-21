@@ -90,6 +90,9 @@ func main() {
 	fmt.Printf("   Large ≥:   %d MB\n\n", largeThresholdMB)
 
 	// ── 1. Pre-flight validation ───────────────────────────────────────────
+	// Start the scan timer here so the reported duration covers all pipeline
+	// stages (preflight through report assembly) but not CLI parsing or prints.
+	scanStart := time.Now()
 	fmt.Println("→ Running pre-flight checks...")
 	if err := preflight.Validate(projectDir); err != nil {
 		log.Fatalf("pre-flight failed: %v", err)
@@ -141,6 +144,7 @@ func main() {
 		Unreferenced:    unreferenced,
 		TotalWasteBytes: computeTotalWaste(duplicates, largeFiles, unreferenced),
 		Warnings:        warnings,
+		ScanDuration:    time.Since(scanStart),
 	}
 
 	// ── 7. Write report ────────────────────────────────────────────────────
